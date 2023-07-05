@@ -1,36 +1,45 @@
 import { SignUpController } from "./signup";
 import { EmailValidator } from "../protocols";
 import { MissingParamError, InvalidParamError, ServerError } from "../errors";
-
-interface SutTypes {
-  sut: SignUpController;
-  emailValidatorSub: EmailValidator;
-}
+import { AccountModel } from "../../domain/models/account";
+import { AddAccount, AddAccountModel } from "../../domain/usecases/add-account";
 
 const makeEmailValidator = (): EmailValidator => {
   class EmailValidatorStub implements EmailValidator {
     isValid(email: string): boolean {
-      return false;
+      return true;
     }
   }
   return new EmailValidatorStub();
 };
 
-const makeEmailValidatorWithError = (): EmailValidator => {
-    class EmailValidatorStub implements EmailValidator {
-      isValid(email: string): boolean {
-        throw new Error();
-      }
+const makeAddAccount = (): AddAccount => {
+  class AddAccountStub implements AddAccount {
+    add(account: AddAccountModel): AccountModel {
+      const fakeAccount = {
+        id: "valid_id",
+        name: "valid_name",
+        email: "valid_email",
+        password: "valid_password",
+      };
+      return fakeAccount;
     }
-    return new EmailValidatorStub();
-  };
+  }
 
+  return new AddAccountStub();
+};
+
+interface SutTypes {
+  sut: SignUpController;
+  emailValidatorSub: EmailValidator;
+  addAccountStub: AddAccount
+}
 const makeSut = (): SutTypes => {
   const emailValidatorSub = makeEmailValidator();
+  const addAccountStub = makeAddAccount();
+  const sut = new SignUpController(emailValidatorSub, addAccountStub);
 
-  const sut = new SignUpController(emailValidatorSub);
-
-  return { sut, emailValidatorSub };
+  return { sut, emailValidatorSub, addAccountStub };
 };
 
 describe("SignUp Controller", () => {
@@ -96,6 +105,24 @@ describe("SignUp Controller", () => {
     );
   });
 
+  test("Should return 400 if passwordConfirmation fails", () => {
+    const { sut } = makeSut();
+    const httpRequest = {
+      body: {
+        name: "any_name",
+        email: "any_email",
+        password: "any_password",
+        passwordConfirmation: "invalid_password",
+      },
+    };
+
+    const httpResponse = sut.handle(httpRequest);
+    expect(httpResponse.statusCode).toBe(400);
+    expect(httpResponse.body).toEqual(
+      new InvalidParamError("passwordConfirmation")
+    );
+  });
+
   test("Should return 400 if an invalid email is provided", () => {
     const { sut, emailValidatorSub } = makeSut();
 
@@ -115,7 +142,7 @@ describe("SignUp Controller", () => {
     expect(httpResponse.body).toEqual(new InvalidParamError("email"));
   });
 
-  test("Should call EmaiLValidator with correct email", () => {
+  test("Should call EmailValidator with correct email", () => {
     const { sut, emailValidatorSub } = makeSut();
 
     const isValidSpy = jest.spyOn(emailValidatorSub, "isValid");
@@ -134,9 +161,11 @@ describe("SignUp Controller", () => {
   });
 
   test("Should return 500 if EmailValidator throws", () => {
-    const emailValidatorSub = makeEmailValidatorWithError();
+    const { sut, emailValidatorSub } = makeSut();
 
-    const sut = new SignUpController(emailValidatorSub);
+    jest.spyOn(emailValidatorSub, "isValid").mockImplementationOnce(() => {
+      throw new Error();
+    });
 
     const httpRequest = {
       body: {
@@ -150,5 +179,27 @@ describe("SignUp Controller", () => {
     const httpResponse = sut.handle(httpRequest);
     expect(httpResponse.statusCode).toBe(500);
     expect(httpResponse.body).toEqual(new ServerError());
+  });
+
+  test("Should call AddAccount with correct values", () => {
+    const { sut, addAccountStub } = makeSut();
+
+    const addSpy = jest.spyOn(addAccountStub, "add");
+
+    const httpRequest = {
+      body: {
+        name: "any_name",
+        email: "any_email@mail.com",
+        password: "any_password",
+        passwordConfirmation: "any_password",
+      },
+    };
+
+    sut.handle(httpRequest);
+    expect(addSpy).toHaveBeenCalledWith({
+      name: "any_name",
+      email: "any_email@mail.com",
+      password: "any_password",
+    });
   });
 });
